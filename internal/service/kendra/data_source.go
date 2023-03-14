@@ -12,11 +12,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	"github.com/aws/aws-sdk-go-v2/service/kendra"
+	"github.com/aws/aws-sdk-go-v2/service/kendra/document"
 	"github.com/aws/aws-sdk-go-v2/service/kendra/types"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/structure"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/hashicorp/terraform-provider-aws/internal/conns"
 	"github.com/hashicorp/terraform-provider-aws/internal/enum"
@@ -150,6 +152,24 @@ func ResourceDataSource() *schema.Resource {
 										Elem: &schema.Schema{
 											Type:         schema.TypeString,
 											ValidateFunc: validation.StringLenBetween(1, 150),
+										},
+									},
+								},
+							},
+						},
+						"template_configuration": {
+							Type:     schema.TypeList,
+							Optional: true,
+							MaxItems: 1,
+							Elem: &schema.Resource{
+								Schema: map[string]*schema.Schema{
+									"template": {
+										Type:         schema.TypeString,
+										Required:     true,
+										ValidateFunc: validation.StringIsJSON,
+										StateFunc: func(v interface{}) string {
+											json, _ := structure.NormalizeJsonString(v)
+											return json
 										},
 									},
 								},
@@ -944,6 +964,10 @@ func expandDataSourceConfiguration(tfList []interface{}) *types.DataSourceConfig
 		result.WebCrawlerConfiguration = expandWebCrawlerConfiguration(v)
 	}
 
+	if v, ok := tfMap["template_configuration"].([]interface{}); ok && len(v) > 0 {
+		result.TemplateConfiguration = expandTemplateConfiguration(v)
+	}
+
 	return result
 }
 
@@ -1068,6 +1092,24 @@ func expandWebCrawlerConfiguration(tfList []interface{}) *types.WebCrawlerConfig
 
 	if v, ok := tfMap["url_inclusion_patterns"]; ok && v.(*schema.Set).Len() >= 0 {
 		result.UrlInclusionPatterns = flex.ExpandStringValueSet(v.(*schema.Set))
+	}
+
+	return result
+}
+
+// Template Configuration
+func expandTemplateConfiguration(tfList []interface{}) *types.TemplateConfiguration {
+	if len(tfList) == 0 || tfList[0] == nil {
+		return nil
+	}
+
+	tfMap, ok := tfList[0].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	result := &types.TemplateConfiguration{
+		Template: document.NewLazyDocument(tfMap["template"]),
 	}
 
 	return result
@@ -1374,6 +1416,10 @@ func flattenDataSourceConfiguration(apiObject *types.DataSourceConfiguration) []
 		m["web_crawler_configuration"] = flattenWebCrawlerConfiguration(v)
 	}
 
+	if v := apiObject.TemplateConfiguration; v != nil {
+		m["template_configuration"] = flattenTemplateConfiguration(v)
+	}
+
 	return []interface{}{m}
 }
 
@@ -1475,6 +1521,19 @@ func flattenWebCrawlerConfiguration(apiObject *types.WebCrawlerConfiguration) []
 
 	if v := apiObject.UrlInclusionPatterns; v != nil {
 		m["url_inclusion_patterns"] = flex.FlattenStringValueSet(v)
+	}
+
+	return []interface{}{m}
+}
+
+// Template Configuration
+func flattenTemplateConfiguration(apiObject *types.TemplateConfiguration) []interface{} {
+	if apiObject == nil {
+		return nil
+	}
+
+	m := map[string]interface{}{
+		"template": apiObject.Template,
 	}
 
 	return []interface{}{m}
