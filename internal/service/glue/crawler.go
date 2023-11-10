@@ -1,18 +1,21 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package glue
 
 import (
 	"context"
 	"fmt"
 	"log"
-	"regexp"
 	"strings"
 
+	"github.com/YakDriver/regexache"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/service/glue"
 	"github.com/hashicorp/aws-sdk-go-base/v2/awsv1shim/v2/tfawserr"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/retry"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/structure"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
@@ -22,13 +25,15 @@ import (
 	tftags "github.com/hashicorp/terraform-provider-aws/internal/tags"
 	"github.com/hashicorp/terraform-provider-aws/internal/tfresource"
 	"github.com/hashicorp/terraform-provider-aws/internal/verify"
+	"github.com/hashicorp/terraform-provider-aws/names"
 )
 
 func targets() []string {
-	return []string{"s3_target", "dynamodb_target", "mongodb_target", "jdbc_target", "catalog_target", "delta_target"}
+	return []string{"s3_target", "dynamodb_target", "mongodb_target", "jdbc_target", "catalog_target", "delta_target", "iceberg_target", "hudi_target"}
 }
 
-// @SDKResource("aws_glue_crawler")
+// @SDKResource("aws_glue_crawler", name="Crawler")
+// @Tags(identifierAttribute="arn")
 func ResourceCrawler() *schema.Resource {
 	return &schema.Resource{
 		CreateWithoutTimeout: resourceCrawlerCreate,
@@ -156,6 +161,64 @@ func ResourceCrawler() *schema.Resource {
 					},
 				},
 			},
+			"hudi_target": {
+				Type:         schema.TypeList,
+				Optional:     true,
+				MinItems:     1,
+				AtLeastOneOf: targets(),
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"connection_name": {
+							Type:     schema.TypeString,
+							Optional: true,
+						},
+						"exclusions": {
+							Type:     schema.TypeList,
+							Optional: true,
+							Elem:     &schema.Schema{Type: schema.TypeString},
+						},
+						"maximum_traversal_depth": {
+							Type:         schema.TypeInt,
+							Required:     true,
+							ValidateFunc: validation.IntBetween(1, 20),
+						},
+						"paths": {
+							Type:     schema.TypeSet,
+							Required: true,
+							Elem:     &schema.Schema{Type: schema.TypeString},
+						},
+					},
+				},
+			},
+			"iceberg_target": {
+				Type:         schema.TypeList,
+				Optional:     true,
+				MinItems:     1,
+				AtLeastOneOf: targets(),
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"connection_name": {
+							Type:     schema.TypeString,
+							Optional: true,
+						},
+						"exclusions": {
+							Type:     schema.TypeList,
+							Optional: true,
+							Elem:     &schema.Schema{Type: schema.TypeString},
+						},
+						"maximum_traversal_depth": {
+							Type:         schema.TypeInt,
+							Required:     true,
+							ValidateFunc: validation.IntBetween(1, 20),
+						},
+						"paths": {
+							Type:     schema.TypeSet,
+							Required: true,
+							Elem:     &schema.Schema{Type: schema.TypeString},
+						},
+					},
+				},
+			},
 			"jdbc_target": {
 				Type:         schema.TypeList,
 				Optional:     true,
@@ -252,7 +315,7 @@ func ResourceCrawler() *schema.Resource {
 				Required: true,
 				ValidateFunc: validation.All(
 					validation.StringLenBetween(1, 255),
-					validation.StringMatch(regexp.MustCompile(`[a-zA-Z0-9-_$#\/]+$`), ""),
+					validation.StringMatch(regexache.MustCompile(`[0-9A-Za-z_$#\/-]+$`), ""),
 				),
 			},
 			"recrawl_policy": {
@@ -358,46 +421,51 @@ func ResourceCrawler() *schema.Resource {
 				Optional:     true,
 				ValidateFunc: validation.StringLenBetween(0, 128),
 			},
-			"tags":     tftags.TagsSchema(),
-			"tags_all": tftags.TagsSchemaComputed(),
+			names.AttrTags:    tftags.TagsSchema(),
+			names.AttrTagsAll: tftags.TagsSchemaComputed(),
 		},
 	}
 }
 
 func resourceCrawlerCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
-	glueConn := meta.(*conns.AWSClient).GlueConn()
+	glueConn := meta.(*conns.AWSClient).GlueConn(ctx)
 	name := d.Get("name").(string)
 
-	crawlerInput, err := createCrawlerInput(ctx, d, name, meta.(*conns.AWSClient).DefaultTagsConfig)
+	crawlerInput, err := createCrawlerInput(ctx, d, name)
 	if err != nil {
 		return sdkdiag.AppendErrorf(diags, "creating Glue Crawler (%s): %s", name, err)
 	}
 
 	// Retry for IAM eventual consistency
-	err = resource.RetryContext(ctx, propagationTimeout, func() *resource.RetryError {
+	err = retry.RetryContext(ctx, propagationTimeout, func() *retry.RetryError {
 		_, err = glueConn.CreateCrawlerWithContext(ctx, crawlerInput)
 		if err != nil {
 			// InvalidInputException: Insufficient Lake Formation permission(s) on xxx
 			if tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "Insufficient Lake Formation permission") {
-				return resource.RetryableError(err)
+				return retry.RetryableError(err)
 			}
 
-			if tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "Service is unable to assume role") {
-				return resource.RetryableError(err)
+			if tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "Service is unable to assume provided role") {
+				return retry.RetryableError(err)
+			}
+
+			// InvalidInputException: com.amazonaws.services.glue.model.AccessDeniedException: You need to enable AWS Security Token Service for this region. . Please verify the role's TrustPolicy.
+			if tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "Please verify the role's TrustPolicy") {
+				return retry.RetryableError(err)
 			}
 
 			// InvalidInputException: Unable to retrieve connection tf-acc-test-8656357591012534997: User: arn:aws:sts::*******:assumed-role/tf-acc-test-8656357591012534997/AWS-Crawler is not authorized to perform: glue:GetConnection on resource: * (Service: AmazonDataCatalog; Status Code: 400; Error Code: AccessDeniedException; Request ID: 4d72b66f-9c75-11e8-9faf-5b526c7be968)
 			if tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "is not authorized") {
-				return resource.RetryableError(err)
+				return retry.RetryableError(err)
 			}
 
 			// InvalidInputException: SQS queue arn:aws:sqs:us-west-2:*******:tf-acc-test-4317277351691904203 does not exist or the role provided does not have access to it.
 			if tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "SQS queue") && tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "does not exist or the role provided does not have access to it") {
-				return resource.RetryableError(err)
+				return retry.RetryableError(err)
 			}
 
-			return resource.NonRetryableError(err)
+			return retry.NonRetryableError(err)
 		}
 		return nil
 	})
@@ -414,9 +482,7 @@ func resourceCrawlerCreate(ctx context.Context, d *schema.ResourceData, meta int
 
 func resourceCrawlerRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
-	conn := meta.(*conns.AWSClient).GlueConn()
-	defaultTagsConfig := meta.(*conns.AWSClient).DefaultTagsConfig
-	ignoreTagsConfig := meta.(*conns.AWSClient).IgnoreTagsConfig
+	conn := meta.(*conns.AWSClient).GlueConn(ctx)
 
 	crawler, err := FindCrawlerByName(ctx, conn, d.Id())
 	if !d.IsNewResource() && tfresource.NotFound(err) {
@@ -482,23 +548,14 @@ func resourceCrawlerRead(ctx context.Context, d *schema.ResourceData, meta inter
 		if err := d.Set("delta_target", flattenDeltaTargets(crawler.Targets.DeltaTargets)); err != nil {
 			return sdkdiag.AppendErrorf(diags, "setting delta_target: %s", err)
 		}
-	}
 
-	tags, err := ListTags(ctx, conn, crawlerARN)
+		if err := d.Set("hudi_target", flattenHudiTargets(crawler.Targets.HudiTargets)); err != nil {
+			return sdkdiag.AppendErrorf(diags, "setting hudi_target: %s", err)
+		}
 
-	if err != nil {
-		return sdkdiag.AppendErrorf(diags, "listing tags for Glue Crawler (%s): %s", crawlerARN, err)
-	}
-
-	tags = tags.IgnoreAWS().IgnoreConfig(ignoreTagsConfig)
-
-	//lintignore:AWSR002
-	if err := d.Set("tags", tags.RemoveDefaultConfig(defaultTagsConfig).Map()); err != nil {
-		return sdkdiag.AppendErrorf(diags, "setting tags: %s", err)
-	}
-
-	if err := d.Set("tags_all", tags.Map()); err != nil {
-		return sdkdiag.AppendErrorf(diags, "setting tags_all: %s", err)
+		if err := d.Set("iceberg_target", flattenIcebergTargets(crawler.Targets.IcebergTargets)); err != nil {
+			return sdkdiag.AppendErrorf(diags, "setting iceberg_target: %s", err)
+		}
 	}
 
 	if err := d.Set("lineage_configuration", flattenCrawlerLineageConfiguration(crawler.LineageConfiguration)); err != nil {
@@ -518,7 +575,7 @@ func resourceCrawlerRead(ctx context.Context, d *schema.ResourceData, meta inter
 
 func resourceCrawlerUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
-	glueConn := meta.(*conns.AWSClient).GlueConn()
+	glueConn := meta.(*conns.AWSClient).GlueConn(ctx)
 	name := d.Get("name").(string)
 
 	if d.HasChangesExcept("tags", "tags_all") {
@@ -528,29 +585,34 @@ func resourceCrawlerUpdate(ctx context.Context, d *schema.ResourceData, meta int
 		}
 
 		// Retry for IAM eventual consistency
-		err = resource.RetryContext(ctx, propagationTimeout, func() *resource.RetryError {
+		err = retry.RetryContext(ctx, propagationTimeout, func() *retry.RetryError {
 			_, err := glueConn.UpdateCrawlerWithContext(ctx, updateCrawlerInput)
 			if err != nil {
 				// InvalidInputException: Insufficient Lake Formation permission(s) on xxx
 				if tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "Insufficient Lake Formation permission") {
-					return resource.RetryableError(err)
+					return retry.RetryableError(err)
 				}
 
-				if tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "Service is unable to assume role") {
-					return resource.RetryableError(err)
+				if tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "Service is unable to assume provided role") {
+					return retry.RetryableError(err)
+				}
+
+				// InvalidInputException: com.amazonaws.services.glue.model.AccessDeniedException: You need to enable AWS Security Token Service for this region. . Please verify the role's TrustPolicy.
+				if tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "Please verify the role's TrustPolicy") {
+					return retry.RetryableError(err)
 				}
 
 				// InvalidInputException: Unable to retrieve connection tf-acc-test-8656357591012534997: User: arn:aws:sts::*******:assumed-role/tf-acc-test-8656357591012534997/AWS-Crawler is not authorized to perform: glue:GetConnection on resource: * (Service: AmazonDataCatalog; Status Code: 400; Error Code: AccessDeniedException; Request ID: 4d72b66f-9c75-11e8-9faf-5b526c7be968)
 				if tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "is not authorized") {
-					return resource.RetryableError(err)
+					return retry.RetryableError(err)
 				}
 
 				// InvalidInputException: SQS queue arn:aws:sqs:us-west-2:*******:tf-acc-test-4317277351691904203 does not exist or the role provided does not have access to it.
 				if tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "SQS queue") && tfawserr.ErrMessageContains(err, glue.ErrCodeInvalidInputException, "does not exist or the role provided does not have access to it") {
-					return resource.RetryableError(err)
+					return retry.RetryableError(err)
 				}
 
-				return resource.NonRetryableError(err)
+				return retry.NonRetryableError(err)
 			}
 			return nil
 		})
@@ -564,19 +626,12 @@ func resourceCrawlerUpdate(ctx context.Context, d *schema.ResourceData, meta int
 		}
 	}
 
-	if d.HasChange("tags_all") {
-		o, n := d.GetChange("tags_all")
-		if err := UpdateTags(ctx, glueConn, d.Get("arn").(string), o, n); err != nil {
-			return sdkdiag.AppendErrorf(diags, "updating tags: %s", err)
-		}
-	}
-
 	return append(diags, resourceCrawlerRead(ctx, d, meta)...)
 }
 
 func resourceCrawlerDelete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
-	glueConn := meta.(*conns.AWSClient).GlueConn()
+	glueConn := meta.(*conns.AWSClient).GlueConn(ctx)
 
 	log.Printf("[DEBUG] Deleting Glue Crawler: %s", d.Id())
 	_, err := glueConn.DeleteCrawlerWithContext(ctx, &glue.DeleteCrawlerInput{
@@ -594,14 +649,12 @@ func resourceCrawlerDelete(ctx context.Context, d *schema.ResourceData, meta int
 	return diags
 }
 
-func createCrawlerInput(ctx context.Context, d *schema.ResourceData, crawlerName string, defaultTagsConfig *tftags.DefaultConfig) (*glue.CreateCrawlerInput, error) {
-	tags := defaultTagsConfig.MergeTags(tftags.New(ctx, d.Get("tags").(map[string]interface{})))
-
+func createCrawlerInput(ctx context.Context, d *schema.ResourceData, crawlerName string) (*glue.CreateCrawlerInput, error) {
 	crawlerInput := &glue.CreateCrawlerInput{
 		Name:         aws.String(crawlerName),
 		DatabaseName: aws.String(d.Get("database_name").(string)),
 		Role:         aws.String(d.Get("role").(string)),
-		Tags:         Tags(tags.IgnoreAWS()),
+		Tags:         getTagsIn(ctx),
 		Targets:      expandCrawlerTargets(d),
 	}
 	if description, ok := d.GetOk("description"); ok {
@@ -752,6 +805,14 @@ func expandCrawlerTargets(d *schema.ResourceData) *glue.CrawlerTargets {
 		crawlerTargets.DeltaTargets = expandDeltaTargets(v.([]interface{}))
 	}
 
+	if v, ok := d.GetOk("hudi_target"); ok {
+		crawlerTargets.HudiTargets = expandHudiTargets(v.([]interface{}))
+	}
+
+	if v, ok := d.GetOk("iceberg_target"); ok {
+		crawlerTargets.IcebergTargets = expandIcebergTargets(v.([]interface{}))
+	}
+
 	return crawlerTargets
 }
 
@@ -842,7 +903,7 @@ func expandJDBCTarget(cfg map[string]interface{}) *glue.JdbcTarget {
 	}
 
 	if v, ok := cfg["enable_additional_metadata"].([]interface{}); ok {
-		target.Exclusions = flex.ExpandStringList(v)
+		target.EnableAdditionalMetadata = flex.ExpandStringList(v)
 	}
 
 	if v, ok := cfg["exclusions"].([]interface{}); ok {
@@ -927,6 +988,66 @@ func expandDeltaTarget(cfg map[string]interface{}) *glue.DeltaTarget {
 		CreateNativeDeltaTable: aws.Bool(cfg["create_native_delta_table"].(bool)),
 		DeltaTables:            flex.ExpandStringSet(cfg["delta_tables"].(*schema.Set)),
 		WriteManifest:          aws.Bool(cfg["write_manifest"].(bool)),
+	}
+
+	if v, ok := cfg["connection_name"].(string); ok {
+		target.ConnectionName = aws.String(v)
+	}
+
+	return target
+}
+
+func expandHudiTargets(targets []interface{}) []*glue.HudiTarget {
+	if len(targets) < 1 {
+		return []*glue.HudiTarget{}
+	}
+
+	perms := make([]*glue.HudiTarget, len(targets))
+	for i, rawCfg := range targets {
+		cfg := rawCfg.(map[string]interface{})
+		perms[i] = expandHudiTarget(cfg)
+	}
+	return perms
+}
+
+func expandHudiTarget(cfg map[string]interface{}) *glue.HudiTarget {
+	target := &glue.HudiTarget{
+		Paths:                 flex.ExpandStringSet(cfg["paths"].(*schema.Set)),
+		MaximumTraversalDepth: aws.Int64(int64(cfg["maximum_traversal_depth"].(int))),
+	}
+
+	if v, ok := cfg["exclusions"]; ok {
+		target.Exclusions = flex.ExpandStringList(v.([]interface{}))
+	}
+
+	if v, ok := cfg["connection_name"].(string); ok {
+		target.ConnectionName = aws.String(v)
+	}
+
+	return target
+}
+
+func expandIcebergTargets(targets []interface{}) []*glue.IcebergTarget {
+	if len(targets) < 1 {
+		return []*glue.IcebergTarget{}
+	}
+
+	perms := make([]*glue.IcebergTarget, len(targets))
+	for i, rawCfg := range targets {
+		cfg := rawCfg.(map[string]interface{})
+		perms[i] = expandIcebergTarget(cfg)
+	}
+	return perms
+}
+
+func expandIcebergTarget(cfg map[string]interface{}) *glue.IcebergTarget {
+	target := &glue.IcebergTarget{
+		Paths:                 flex.ExpandStringSet(cfg["paths"].(*schema.Set)),
+		MaximumTraversalDepth: aws.Int64(int64(cfg["maximum_traversal_depth"].(int))),
+	}
+
+	if v, ok := cfg["exclusions"]; ok {
+		target.Exclusions = flex.ExpandStringList(v.([]interface{}))
 	}
 
 	if v, ok := cfg["connection_name"].(string); ok {
@@ -1025,6 +1146,36 @@ func flattenDeltaTargets(deltaTargets []*glue.DeltaTarget) []map[string]interfac
 		attrs["create_native_delta_table"] = aws.BoolValue(deltaTarget.CreateNativeDeltaTable)
 		attrs["delta_tables"] = flex.FlattenStringSet(deltaTarget.DeltaTables)
 		attrs["write_manifest"] = aws.BoolValue(deltaTarget.WriteManifest)
+
+		result = append(result, attrs)
+	}
+	return result
+}
+
+func flattenHudiTargets(hudiTargets []*glue.HudiTarget) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0)
+
+	for _, hudiTarget := range hudiTargets {
+		attrs := make(map[string]interface{})
+		attrs["connection_name"] = aws.StringValue(hudiTarget.ConnectionName)
+		attrs["maximum_traversal_depth"] = aws.Int64Value(hudiTarget.MaximumTraversalDepth)
+		attrs["paths"] = flex.FlattenStringSet(hudiTarget.Paths)
+		attrs["exclusions"] = flex.FlattenStringList(hudiTarget.Exclusions)
+
+		result = append(result, attrs)
+	}
+	return result
+}
+
+func flattenIcebergTargets(icebergTargets []*glue.IcebergTarget) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0)
+
+	for _, icebergTarget := range icebergTargets {
+		attrs := make(map[string]interface{})
+		attrs["connection_name"] = aws.StringValue(icebergTarget.ConnectionName)
+		attrs["maximum_traversal_depth"] = aws.Int64Value(icebergTarget.MaximumTraversalDepth)
+		attrs["paths"] = flex.FlattenStringSet(icebergTarget.Paths)
+		attrs["exclusions"] = flex.FlattenStringList(icebergTarget.Exclusions)
 
 		result = append(result, attrs)
 	}

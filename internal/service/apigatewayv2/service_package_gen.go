@@ -5,6 +5,10 @@ package apigatewayv2
 import (
 	"context"
 
+	aws_sdkv1 "github.com/aws/aws-sdk-go/aws"
+	session_sdkv1 "github.com/aws/aws-sdk-go/aws/session"
+	apigatewayv2_sdkv1 "github.com/aws/aws-sdk-go/service/apigatewayv2"
+	"github.com/hashicorp/terraform-provider-aws/internal/conns"
 	"github.com/hashicorp/terraform-provider-aws/internal/types"
 	"github.com/hashicorp/terraform-provider-aws/names"
 )
@@ -33,6 +37,11 @@ func (p *servicePackage) SDKDataSources(ctx context.Context) []*types.ServicePac
 			Factory:  DataSourceExport,
 			TypeName: "aws_apigatewayv2_export",
 		},
+		{
+			Factory:  DataSourceVPCLink,
+			TypeName: "aws_apigatewayv2_vpc_link",
+			Name:     "VPC Link Data Source",
+		},
 	}
 }
 
@@ -41,6 +50,10 @@ func (p *servicePackage) SDKResources(ctx context.Context) []*types.ServicePacka
 		{
 			Factory:  ResourceAPI,
 			TypeName: "aws_apigatewayv2_api",
+			Name:     "API",
+			Tags: &types.ServicePackageResourceTags{
+				IdentifierAttribute: "arn",
+			},
 		},
 		{
 			Factory:  ResourceAPIMapping,
@@ -57,6 +70,10 @@ func (p *servicePackage) SDKResources(ctx context.Context) []*types.ServicePacka
 		{
 			Factory:  ResourceDomainName,
 			TypeName: "aws_apigatewayv2_domain_name",
+			Name:     "Domain Name",
+			Tags: &types.ServicePackageResourceTags{
+				IdentifierAttribute: "arn",
+			},
 		},
 		{
 			Factory:  ResourceIntegration,
@@ -81,10 +98,18 @@ func (p *servicePackage) SDKResources(ctx context.Context) []*types.ServicePacka
 		{
 			Factory:  ResourceStage,
 			TypeName: "aws_apigatewayv2_stage",
+			Name:     "Stage",
+			Tags: &types.ServicePackageResourceTags{
+				IdentifierAttribute: "arn",
+			},
 		},
 		{
 			Factory:  ResourceVPCLink,
 			TypeName: "aws_apigatewayv2_vpc_link",
+			Name:     "VPC Link",
+			Tags: &types.ServicePackageResourceTags{
+				IdentifierAttribute: "arn",
+			},
 		},
 	}
 }
@@ -93,4 +118,13 @@ func (p *servicePackage) ServicePackageName() string {
 	return names.APIGatewayV2
 }
 
-var ServicePackage = &servicePackage{}
+// NewConn returns a new AWS SDK for Go v1 client for this service package's AWS API.
+func (p *servicePackage) NewConn(ctx context.Context, config map[string]any) (*apigatewayv2_sdkv1.ApiGatewayV2, error) {
+	sess := config["session"].(*session_sdkv1.Session)
+
+	return apigatewayv2_sdkv1.New(sess.Copy(&aws_sdkv1.Config{Endpoint: aws_sdkv1.String(config["endpoint"].(string))})), nil
+}
+
+func ServicePackage(ctx context.Context) conns.ServicePackage {
+	return &servicePackage{}
+}

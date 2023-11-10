@@ -1,10 +1,13 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package transfer
 
 import (
 	"context"
 	"log"
-	"regexp"
 
+	"github.com/YakDriver/regexache"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/transfer"
 	"github.com/hashicorp/aws-sdk-go-base/v2/awsv1shim/v2/tfawserr"
@@ -17,9 +20,11 @@ import (
 	tftags "github.com/hashicorp/terraform-provider-aws/internal/tags"
 	"github.com/hashicorp/terraform-provider-aws/internal/tfresource"
 	"github.com/hashicorp/terraform-provider-aws/internal/verify"
+	"github.com/hashicorp/terraform-provider-aws/names"
 )
 
-// @SDKResource("aws_transfer_workflow")
+// @SDKResource("aws_transfer_workflow", name="Workflow")
+// @Tags(identifierAttribute="arn")
 func ResourceWorkflow() *schema.Resource {
 	return &schema.Resource{
 		CreateWithoutTimeout: resourceWorkflowCreate,
@@ -117,7 +122,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 30),
-											validation.StringMatch(regexp.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
+											validation.StringMatch(regexache.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
 										),
 									},
 									"overwrite_existing": {
@@ -133,7 +138,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 256),
-											validation.StringMatch(regexp.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
+											validation.StringMatch(regexache.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
 										),
 									},
 								},
@@ -152,7 +157,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 30),
-											validation.StringMatch(regexp.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
+											validation.StringMatch(regexache.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
 										),
 									},
 									"source_file_location": {
@@ -161,7 +166,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 256),
-											validation.StringMatch(regexp.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
+											validation.StringMatch(regexache.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
 										),
 									},
 									"target": {
@@ -243,7 +248,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 30),
-											validation.StringMatch(regexp.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
+											validation.StringMatch(regexache.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
 										),
 									},
 									"overwrite_existing": {
@@ -259,7 +264,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 256),
-											validation.StringMatch(regexp.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
+											validation.StringMatch(regexache.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
 										),
 									},
 									"type": {
@@ -284,7 +289,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 30),
-											validation.StringMatch(regexp.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
+											validation.StringMatch(regexache.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
 										),
 									},
 									"source_file_location": {
@@ -293,7 +298,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 256),
-											validation.StringMatch(regexp.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
+											validation.StringMatch(regexache.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
 										),
 									},
 								},
@@ -312,7 +317,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 30),
-											validation.StringMatch(regexp.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
+											validation.StringMatch(regexache.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
 										),
 									},
 									"source_file_location": {
@@ -321,7 +326,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 256),
-											validation.StringMatch(regexp.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
+											validation.StringMatch(regexache.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
 										),
 									},
 									"tags": {
@@ -430,7 +435,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 30),
-											validation.StringMatch(regexp.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
+											validation.StringMatch(regexache.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
 										),
 									},
 									"overwrite_existing": {
@@ -446,7 +451,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 256),
-											validation.StringMatch(regexp.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
+											validation.StringMatch(regexache.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
 										),
 									},
 								},
@@ -465,7 +470,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 30),
-											validation.StringMatch(regexp.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
+											validation.StringMatch(regexache.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
 										),
 									},
 									"source_file_location": {
@@ -474,7 +479,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 256),
-											validation.StringMatch(regexp.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
+											validation.StringMatch(regexache.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
 										),
 									},
 									"target": {
@@ -557,7 +562,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 30),
-											validation.StringMatch(regexp.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
+											validation.StringMatch(regexache.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
 										),
 									},
 									"overwrite_existing": {
@@ -573,7 +578,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 256),
-											validation.StringMatch(regexp.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
+											validation.StringMatch(regexache.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
 										),
 									},
 									"type": {
@@ -598,7 +603,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 30),
-											validation.StringMatch(regexp.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
+											validation.StringMatch(regexache.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
 										),
 									},
 									"source_file_location": {
@@ -607,7 +612,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 256),
-											validation.StringMatch(regexp.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
+											validation.StringMatch(regexache.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
 										),
 									},
 								},
@@ -626,7 +631,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 30),
-											validation.StringMatch(regexp.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
+											validation.StringMatch(regexache.MustCompile(`^[\w-]*$`), "Must be of the pattern ^[\\w-]*$"),
 										),
 									},
 									"source_file_location": {
@@ -635,7 +640,7 @@ func ResourceWorkflow() *schema.Resource {
 										ForceNew: true,
 										ValidateFunc: validation.All(
 											validation.StringLenBetween(0, 256),
-											validation.StringMatch(regexp.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
+											validation.StringMatch(regexache.MustCompile(`^\$\{(\w+.)+\w+\}$`), "Must be of the pattern ^\\$\\{(\\w+.)+\\w+\\}$"),
 										),
 									},
 									"tags": {
@@ -672,19 +677,19 @@ func ResourceWorkflow() *schema.Resource {
 					},
 				},
 			},
-			"tags":     tftags.TagsSchema(),
-			"tags_all": tftags.TagsSchemaComputed(),
+			names.AttrTags:    tftags.TagsSchema(),
+			names.AttrTagsAll: tftags.TagsSchemaComputed(),
 		},
 	}
 }
 
 func resourceWorkflowCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
-	conn := meta.(*conns.AWSClient).TransferConn()
-	defaultTagsConfig := meta.(*conns.AWSClient).DefaultTagsConfig
-	tags := defaultTagsConfig.MergeTags(tftags.New(ctx, d.Get("tags").(map[string]interface{})))
+	conn := meta.(*conns.AWSClient).TransferConn(ctx)
 
-	input := &transfer.CreateWorkflowInput{}
+	input := &transfer.CreateWorkflowInput{
+		Tags: getTagsIn(ctx),
+	}
 
 	if v, ok := d.GetOk("description"); ok {
 		input.Description = aws.String(v.(string))
@@ -698,9 +703,6 @@ func resourceWorkflowCreate(ctx context.Context, d *schema.ResourceData, meta in
 		input.Steps = expandWorkflows(v.([]interface{}))
 	}
 
-	if len(tags) > 0 {
-		input.Tags = Tags(tags.IgnoreAWS())
-	}
 	output, err := conn.CreateWorkflowWithContext(ctx, input)
 
 	if err != nil {
@@ -714,10 +716,7 @@ func resourceWorkflowCreate(ctx context.Context, d *schema.ResourceData, meta in
 
 func resourceWorkflowRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
-	conn := meta.(*conns.AWSClient).TransferConn()
-	defaultTagsConfig := meta.(*conns.AWSClient).DefaultTagsConfig
-	ignoreTagsConfig := meta.(*conns.AWSClient).IgnoreTagsConfig
-
+	conn := meta.(*conns.AWSClient).TransferConn(ctx)
 	output, err := FindWorkflowByID(ctx, conn, d.Id())
 
 	if !d.IsNewResource() && tfresource.NotFound(err) {
@@ -739,37 +738,22 @@ func resourceWorkflowRead(ctx context.Context, d *schema.ResourceData, meta inte
 		return sdkdiag.AppendErrorf(diags, "setting steps: %s", err)
 	}
 
-	tags := KeyValueTags(ctx, output.Tags).IgnoreAWS().IgnoreConfig(ignoreTagsConfig)
-
-	//lintignore:AWSR002
-	if err := d.Set("tags", tags.RemoveDefaultConfig(defaultTagsConfig).Map()); err != nil {
-		return sdkdiag.AppendErrorf(diags, "setting tags: %s", err)
-	}
-
-	if err := d.Set("tags_all", tags.Map()); err != nil {
-		return sdkdiag.AppendErrorf(diags, "setting tags_all: %s", err)
-	}
+	setTagsOut(ctx, output.Tags)
 
 	return diags
 }
 
 func resourceWorkflowUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
-	conn := meta.(*conns.AWSClient).TransferConn()
 
-	if d.HasChange("tags_all") {
-		o, n := d.GetChange("tags_all")
-		if err := UpdateTags(ctx, conn, d.Get("arn").(string), o, n); err != nil {
-			return sdkdiag.AppendErrorf(diags, "updating Transfer Workflow (%s) tags: %s", d.Id(), err)
-		}
-	}
+	// Tags only.
 
 	return append(diags, resourceWorkflowRead(ctx, d, meta)...)
 }
 
 func resourceWorkflowDelete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
-	conn := meta.(*conns.AWSClient).TransferConn()
+	conn := meta.(*conns.AWSClient).TransferConn(ctx)
 
 	log.Printf("[DEBUG] Deleting Transfer Workflow: %s", d.Id())
 	_, err := conn.DeleteWorkflowWithContext(ctx, &transfer.DeleteWorkflowInput{

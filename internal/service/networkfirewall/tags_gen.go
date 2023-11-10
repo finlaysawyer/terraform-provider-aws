@@ -8,14 +8,18 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/networkfirewall"
 	"github.com/aws/aws-sdk-go/service/networkfirewall/networkfirewalliface"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/hashicorp/terraform-provider-aws/internal/conns"
+	"github.com/hashicorp/terraform-provider-aws/internal/logging"
 	tftags "github.com/hashicorp/terraform-provider-aws/internal/tags"
+	"github.com/hashicorp/terraform-provider-aws/internal/types"
+	"github.com/hashicorp/terraform-provider-aws/names"
 )
 
-// ListTags lists networkfirewall service tags.
+// listTags lists networkfirewall service tags.
 // The identifier is typically the Amazon Resource Name (ARN), although
 // it may also be a different identifier depending on the service.
-func ListTags(ctx context.Context, conn networkfirewalliface.NetworkFirewallAPI, identifier string) (tftags.KeyValueTags, error) {
+func listTags(ctx context.Context, conn networkfirewalliface.NetworkFirewallAPI, identifier string) (tftags.KeyValueTags, error) {
 	input := &networkfirewall.ListTagsForResourceInput{
 		ResourceArn: aws.String(identifier),
 	}
@@ -29,8 +33,20 @@ func ListTags(ctx context.Context, conn networkfirewalliface.NetworkFirewallAPI,
 	return KeyValueTags(ctx, output.Tags), nil
 }
 
-func (p *servicePackage) ListTags(ctx context.Context, meta any, identifier string) (tftags.KeyValueTags, error) {
-	return ListTags(ctx, meta.(*conns.AWSClient).NetworkFirewallConn(), identifier)
+// ListTags lists networkfirewall service tags and set them in Context.
+// It is called from outside this package.
+func (p *servicePackage) ListTags(ctx context.Context, meta any, identifier string) error {
+	tags, err := listTags(ctx, meta.(*conns.AWSClient).NetworkFirewallConn(ctx), identifier)
+
+	if err != nil {
+		return err
+	}
+
+	if inContext, ok := tftags.FromContext(ctx); ok {
+		inContext.TagsOut = types.Some(tags)
+	}
+
+	return nil
 }
 
 // []*SERVICE.Tag handling
@@ -62,18 +78,40 @@ func KeyValueTags(ctx context.Context, tags []*networkfirewall.Tag) tftags.KeyVa
 	return tftags.New(ctx, m)
 }
 
-// UpdateTags updates networkfirewall service tags.
+// getTagsIn returns networkfirewall service tags from Context.
+// nil is returned if there are no input tags.
+func getTagsIn(ctx context.Context) []*networkfirewall.Tag {
+	if inContext, ok := tftags.FromContext(ctx); ok {
+		if tags := Tags(inContext.TagsIn.UnwrapOrDefault()); len(tags) > 0 {
+			return tags
+		}
+	}
+
+	return nil
+}
+
+// setTagsOut sets networkfirewall service tags in Context.
+func setTagsOut(ctx context.Context, tags []*networkfirewall.Tag) {
+	if inContext, ok := tftags.FromContext(ctx); ok {
+		inContext.TagsOut = types.Some(KeyValueTags(ctx, tags))
+	}
+}
+
+// updateTags updates networkfirewall service tags.
 // The identifier is typically the Amazon Resource Name (ARN), although
 // it may also be a different identifier depending on the service.
-
-func UpdateTags(ctx context.Context, conn networkfirewalliface.NetworkFirewallAPI, identifier string, oldTagsMap, newTagsMap any) error {
+func updateTags(ctx context.Context, conn networkfirewalliface.NetworkFirewallAPI, identifier string, oldTagsMap, newTagsMap any) error {
 	oldTags := tftags.New(ctx, oldTagsMap)
 	newTags := tftags.New(ctx, newTagsMap)
 
-	if removedTags := oldTags.Removed(newTags); len(removedTags) > 0 {
+	ctx = tflog.SetField(ctx, logging.KeyResourceId, identifier)
+
+	removedTags := oldTags.Removed(newTags)
+	removedTags = removedTags.IgnoreSystem(names.NetworkFirewall)
+	if len(removedTags) > 0 {
 		input := &networkfirewall.UntagResourceInput{
 			ResourceArn: aws.String(identifier),
-			TagKeys:     aws.StringSlice(removedTags.IgnoreAWS().Keys()),
+			TagKeys:     aws.StringSlice(removedTags.Keys()),
 		}
 
 		_, err := conn.UntagResourceWithContext(ctx, input)
@@ -83,10 +121,12 @@ func UpdateTags(ctx context.Context, conn networkfirewalliface.NetworkFirewallAP
 		}
 	}
 
-	if updatedTags := oldTags.Updated(newTags); len(updatedTags) > 0 {
+	updatedTags := oldTags.Updated(newTags)
+	updatedTags = updatedTags.IgnoreSystem(names.NetworkFirewall)
+	if len(updatedTags) > 0 {
 		input := &networkfirewall.TagResourceInput{
 			ResourceArn: aws.String(identifier),
-			Tags:        Tags(updatedTags.IgnoreAWS()),
+			Tags:        Tags(updatedTags),
 		}
 
 		_, err := conn.TagResourceWithContext(ctx, input)
@@ -99,6 +139,8 @@ func UpdateTags(ctx context.Context, conn networkfirewalliface.NetworkFirewallAP
 	return nil
 }
 
+// UpdateTags updates networkfirewall service tags.
+// It is called from outside this package.
 func (p *servicePackage) UpdateTags(ctx context.Context, meta any, identifier string, oldTags, newTags any) error {
-	return UpdateTags(ctx, meta.(*conns.AWSClient).NetworkFirewallConn(), identifier, oldTags, newTags)
+	return updateTags(ctx, meta.(*conns.AWSClient).NetworkFirewallConn(ctx), identifier, oldTags, newTags)
 }

@@ -1,27 +1,31 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package s3_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"reflect"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/YakDriver/regexache"
+	aws_sdkv2 "github.com/aws/aws-sdk-go-v2/aws"
+	s3_sdkv2 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/service/cloudformation"
 	"github.com/aws/aws-sdk-go/service/cloudfront"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/hashicorp/aws-sdk-go-base/v2/awsv1shim/v2/tfawserr"
-	sdkacctest "github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/id"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
+	sdkacctest "github.com/hashicorp/terraform-plugin-testing/helper/acctest"
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/hashicorp/terraform-provider-aws/internal/acctest"
 	"github.com/hashicorp/terraform-provider-aws/internal/conns"
 	tfcloudformation "github.com/hashicorp/terraform-provider-aws/internal/service/cloudformation"
@@ -99,7 +103,8 @@ func TestAccS3Bucket_Basic_emptyString(t *testing.T) {
 				Config: testAccBucketConfig_emptyString,
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckBucketExists(ctx, resourceName),
-					resource.TestMatchResourceAttr(resourceName, "bucket", regexp.MustCompile("^terraform-")),
+					acctest.CheckResourceAttrNameGenerated(resourceName, "bucket"),
+					resource.TestCheckResourceAttr(resourceName, "bucket_prefix", id.UniqueIdPrefix),
 				),
 			},
 			{
@@ -112,7 +117,7 @@ func TestAccS3Bucket_Basic_emptyString(t *testing.T) {
 	})
 }
 
-func TestAccS3Bucket_Basic_generatedName(t *testing.T) {
+func TestAccS3Bucket_Basic_nameGenerated(t *testing.T) {
 	ctx := acctest.Context(t)
 	resourceName := "aws_s3_bucket.test"
 
@@ -123,16 +128,18 @@ func TestAccS3Bucket_Basic_generatedName(t *testing.T) {
 		CheckDestroy:             testAccCheckBucketDestroy(ctx),
 		Steps: []resource.TestStep{
 			{
-				Config: testAccBucketConfig_generatedName,
+				Config: testAccBucketConfig_nameGenerated,
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckBucketExists(ctx, resourceName),
+					acctest.CheckResourceAttrNameGenerated(resourceName, "bucket"),
+					resource.TestCheckResourceAttr(resourceName, "bucket_prefix", id.UniqueIdPrefix),
 				),
 			},
 			{
 				ResourceName:            resourceName,
 				ImportState:             true,
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"force_destroy", "bucket_prefix"},
+				ImportStateVerifyIgnore: []string{"force_destroy"},
 			},
 		},
 	})
@@ -149,17 +156,18 @@ func TestAccS3Bucket_Basic_namePrefix(t *testing.T) {
 		CheckDestroy:             testAccCheckBucketDestroy(ctx),
 		Steps: []resource.TestStep{
 			{
-				Config: testAccBucketConfig_namePrefix,
+				Config: testAccBucketConfig_namePrefix("tf-test-"),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckBucketExists(ctx, resourceName),
-					resource.TestMatchResourceAttr(resourceName, "bucket", regexp.MustCompile("^tf-test-")),
+					acctest.CheckResourceAttrNameFromPrefix(resourceName, "bucket", "tf-test-"),
+					resource.TestCheckResourceAttr(resourceName, "bucket_prefix", "tf-test-"),
 				),
 			},
 			{
 				ResourceName:            resourceName,
 				ImportState:             true,
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"force_destroy", "bucket_prefix"},
+				ImportStateVerifyIgnore: []string{"force_destroy"},
 			},
 		},
 	})
@@ -293,7 +301,7 @@ func TestAccS3Bucket_Basic_keyEnabled(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "server_side_encryption_configuration.0.rule.#", "1"),
 					resource.TestCheckResourceAttr(resourceName, "server_side_encryption_configuration.0.rule.0.apply_server_side_encryption_by_default.#", "1"),
 					resource.TestCheckResourceAttr(resourceName, "server_side_encryption_configuration.0.rule.0.apply_server_side_encryption_by_default.0.sse_algorithm", "aws:kms"),
-					resource.TestMatchResourceAttr(resourceName, "server_side_encryption_configuration.0.rule.0.apply_server_side_encryption_by_default.0.kms_master_key_id", regexp.MustCompile("^arn")),
+					resource.TestMatchResourceAttr(resourceName, "server_side_encryption_configuration.0.rule.0.apply_server_side_encryption_by_default.0.kms_master_key_id", regexache.MustCompile("^arn")),
 					resource.TestCheckResourceAttr(resourceName, "server_side_encryption_configuration.0.rule.0.bucket_key_enabled", "true"),
 				),
 			},
@@ -383,7 +391,7 @@ func TestAccS3Bucket_Duplicate_basic(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config:      testAccBucketConfig_duplicate(region, bucketName),
-				ExpectError: regexp.MustCompile(s3.ErrCodeBucketAlreadyOwnedByYou),
+				ExpectError: regexache.MustCompile(s3.ErrCodeBucketAlreadyOwnedByYou),
 			},
 		},
 	})
@@ -403,7 +411,7 @@ func TestAccS3Bucket_Duplicate_UsEast1(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config:      testAccBucketConfig_duplicate(endpoints.UsEast1RegionID, bucketName),
-				ExpectError: regexp.MustCompile(tfs3.ErrMessageBucketAlreadyExists),
+				ExpectError: regexache.MustCompile(tfs3.ErrMessageBucketAlreadyExists),
 			},
 		},
 	})
@@ -424,7 +432,7 @@ func TestAccS3Bucket_Duplicate_UsEast1AltAccount(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config:      testAccBucketConfig_duplicateAltAccount(endpoints.UsEast1RegionID, bucketName),
-				ExpectError: regexp.MustCompile(s3.ErrCodeBucketAlreadyOwnedByYou),
+				ExpectError: regexache.MustCompile(s3.ErrCodeBucketAlreadyExists),
 			},
 		},
 	})
@@ -529,9 +537,9 @@ func TestAccS3Bucket_Tags_withSystemTags(t *testing.T) {
 			testAccCheckBucketDestroy(ctx),
 			func(s *terraform.State) error {
 				// Tear down CF stack.
-				conn := acctest.Provider.Meta().(*conns.AWSClient).CloudFormationConn()
+				conn := acctest.Provider.Meta().(*conns.AWSClient).CloudFormationConn(ctx)
 
-				requestToken := resource.UniqueId()
+				requestToken := id.UniqueId()
 				req := &cloudformation.DeleteStackInput{
 					StackName:          aws.String(stackID),
 					ClientRequestToken: aws.String(requestToken),
@@ -1558,7 +1566,7 @@ func TestAccS3Bucket_Replication_expectVersioningValidationError(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config:      testAccBucketConfig_replicationNoVersioning(bucketName),
-				ExpectError: regexp.MustCompile(`versioning must be enabled to allow S3 bucket replication`),
+				ExpectError: regexache.MustCompile(`versioning must be enabled to allow S3 bucket replication`),
 			},
 		},
 	})
@@ -1786,163 +1794,6 @@ func TestAccS3Bucket_Replication_RTC_valid(t *testing.T) {
 	})
 }
 
-func TestAccS3Bucket_Security_updateACL(t *testing.T) {
-	ctx := acctest.Context(t)
-	bucketName := sdkacctest.RandomWithPrefix(acctest.ResourcePrefix)
-	resourceName := "aws_s3_bucket.test"
-
-	resource.ParallelTest(t, resource.TestCase{
-		PreCheck:                 func() { acctest.PreCheck(ctx, t) },
-		ErrorCheck:               acctest.ErrorCheck(t, s3.EndpointsID),
-		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
-		CheckDestroy:             testAccCheckBucketDestroy(ctx),
-		Steps: []resource.TestStep{
-			{
-				Config: testAccBucketConfig_acl(bucketName, s3.BucketCannedACLPublicRead),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckBucketExists(ctx, resourceName),
-					resource.TestCheckResourceAttr(resourceName, "acl", s3.BucketCannedACLPublicRead),
-				),
-			},
-			{
-				ResourceName:            resourceName,
-				ImportState:             true,
-				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"force_destroy", "acl"},
-			},
-			{
-				Config: testAccBucketConfig_acl(bucketName, s3.BucketCannedACLPrivate),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckBucketExists(ctx, resourceName),
-					resource.TestCheckResourceAttr(resourceName, "acl", s3.BucketCannedACLPrivate),
-				),
-			},
-		},
-	})
-}
-
-func TestAccS3Bucket_Security_updateGrant(t *testing.T) {
-	ctx := acctest.Context(t)
-	bucketName := sdkacctest.RandomWithPrefix("tf-test-bucket")
-	resourceName := "aws_s3_bucket.test"
-
-	resource.ParallelTest(t, resource.TestCase{
-		PreCheck:                 func() { acctest.PreCheck(ctx, t) },
-		ErrorCheck:               acctest.ErrorCheck(t, s3.EndpointsID),
-		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
-		CheckDestroy:             testAccCheckBucketDestroy(ctx),
-		Steps: []resource.TestStep{
-			{
-				Config: testAccBucketConfig_aclGrants(bucketName),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckBucketExists(ctx, resourceName),
-					resource.TestCheckResourceAttr(resourceName, "grant.#", "1"),
-					resource.TestCheckTypeSetElemNestedAttrs(resourceName, "grant.*", map[string]string{
-						"permissions.#": "2",
-						"type":          "CanonicalUser",
-					}),
-					resource.TestCheckTypeSetElemAttr(resourceName, "grant.*.permissions.*", "FULL_CONTROL"),
-					resource.TestCheckTypeSetElemAttr(resourceName, "grant.*.permissions.*", "WRITE"),
-				),
-			},
-			{
-				ResourceName:            resourceName,
-				ImportState:             true,
-				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"force_destroy"},
-			},
-			{
-				Config: testAccBucketConfig_updatedGrants(bucketName),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckBucketExists(ctx, resourceName),
-					resource.TestCheckResourceAttr(resourceName, "grant.#", "2"),
-					resource.TestCheckTypeSetElemNestedAttrs(resourceName, "grant.*", map[string]string{
-						"permissions.#": "1",
-						"type":          "CanonicalUser",
-					}),
-					resource.TestCheckTypeSetElemAttr(resourceName, "grant.*.permissions.*", "READ"),
-					resource.TestCheckTypeSetElemNestedAttrs(resourceName, "grant.*", map[string]string{
-						"permissions.#": "1",
-						"type":          "Group",
-						"uri":           "http://acs.amazonaws.com/groups/s3/LogDelivery",
-					}),
-					resource.TestCheckTypeSetElemAttr(resourceName, "grant.*.permissions.*", "READ_ACP"),
-				),
-			},
-			{
-				// As Grant is a Computed field, removing them from terraform will not
-				// trigger an update to remove them from the S3 bucket.
-				Config: testAccBucketConfig_basic(bucketName),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckBucketExists(ctx, resourceName),
-					resource.TestCheckResourceAttr(resourceName, "grant.#", "2"),
-				),
-			},
-		},
-	})
-}
-
-func TestAccS3Bucket_Security_aclToGrant(t *testing.T) {
-	ctx := acctest.Context(t)
-	bucketName := sdkacctest.RandomWithPrefix("tf-test-bucket")
-	resourceName := "aws_s3_bucket.test"
-
-	resource.ParallelTest(t, resource.TestCase{
-		PreCheck:                 func() { acctest.PreCheck(ctx, t) },
-		ErrorCheck:               acctest.ErrorCheck(t, s3.EndpointsID),
-		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
-		CheckDestroy:             testAccCheckBucketDestroy(ctx),
-		Steps: []resource.TestStep{
-			{
-				Config: testAccBucketConfig_acl(bucketName, s3.BucketCannedACLPublicRead),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckBucketExists(ctx, resourceName),
-					resource.TestCheckResourceAttr(resourceName, "acl", s3.BucketCannedACLPublicRead),
-					// By default, the S3 Bucket will have 2 grants configured
-					resource.TestCheckResourceAttr(resourceName, "grant.#", "2"),
-				),
-			},
-			{
-				Config: testAccBucketConfig_aclGrants(bucketName),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckBucketExists(ctx, resourceName),
-					resource.TestCheckResourceAttr(resourceName, "grant.#", "1"),
-				),
-			},
-		},
-	})
-}
-
-func TestAccS3Bucket_Security_grantToACL(t *testing.T) {
-	ctx := acctest.Context(t)
-	bucketName := sdkacctest.RandomWithPrefix("tf-test-bucket")
-	resourceName := "aws_s3_bucket.test"
-
-	resource.ParallelTest(t, resource.TestCase{
-		PreCheck:                 func() { acctest.PreCheck(ctx, t) },
-		ErrorCheck:               acctest.ErrorCheck(t, s3.EndpointsID),
-		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
-		CheckDestroy:             testAccCheckBucketDestroy(ctx),
-		Steps: []resource.TestStep{
-			{
-				Config: testAccBucketConfig_aclGrants(bucketName),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckBucketExists(ctx, resourceName),
-					resource.TestCheckResourceAttr(resourceName, "grant.#", "1"),
-				),
-			},
-			{
-				Config: testAccBucketConfig_acl(bucketName, s3.BucketCannedACLPublicRead),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckBucketExists(ctx, resourceName),
-					resource.TestCheckResourceAttr(resourceName, "acl", s3.BucketCannedACLPublicRead),
-					resource.TestCheckResourceAttr(resourceName, "grant.#", "1"),
-				),
-			},
-		},
-	})
-}
-
 func TestAccS3Bucket_Security_corsUpdate(t *testing.T) {
 	ctx := acctest.Context(t)
 	bucketName := sdkacctest.RandomWithPrefix("tf-test-bucket")
@@ -1955,7 +1806,7 @@ func TestAccS3Bucket_Security_corsUpdate(t *testing.T) {
 				return fmt.Errorf("Not found: %s", n)
 			}
 
-			conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn()
+			conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn(ctx)
 			_, err := conn.PutBucketCorsWithContext(ctx, &s3.PutBucketCorsInput{
 				Bucket: aws.String(rs.Primary.ID),
 				CORSConfiguration: &s3.CORSConfiguration{
@@ -2041,7 +1892,7 @@ func TestAccS3Bucket_Security_corsDelete(t *testing.T) {
 				return fmt.Errorf("Not found: %s", n)
 			}
 
-			conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn()
+			conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn(ctx)
 			_, err := conn.DeleteBucketCorsWithContext(ctx, &s3.DeleteBucketCorsInput{
 				Bucket: aws.String(rs.Primary.ID),
 			})
@@ -2185,7 +2036,7 @@ func TestAccS3Bucket_Security_enableDefaultEncryptionWhenTypical(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "server_side_encryption_configuration.0.rule.#", "1"),
 					resource.TestCheckResourceAttr(resourceName, "server_side_encryption_configuration.0.rule.0.apply_server_side_encryption_by_default.#", "1"),
 					resource.TestCheckResourceAttr(resourceName, "server_side_encryption_configuration.0.rule.0.apply_server_side_encryption_by_default.0.sse_algorithm", s3.ServerSideEncryptionAwsKms),
-					resource.TestMatchResourceAttr(resourceName, "server_side_encryption_configuration.0.rule.0.apply_server_side_encryption_by_default.0.kms_master_key_id", regexp.MustCompile("^arn")),
+					resource.TestMatchResourceAttr(resourceName, "server_side_encryption_configuration.0.rule.0.apply_server_side_encryption_by_default.0.kms_master_key_id", regexache.MustCompile("^arn")),
 				),
 			},
 			{
@@ -2260,63 +2111,6 @@ func TestAccS3Bucket_Security_disableDefaultEncryptionWhenDefaultEncryptionIsEna
 				Check: resource.ComposeAggregateTestCheckFunc(
 					testAccCheckBucketExists(ctx, resourceName),
 					resource.TestCheckResourceAttr(resourceName, "server_side_encryption_configuration.#", "1"),
-				),
-			},
-		},
-	})
-}
-
-func TestAccS3Bucket_Security_policy(t *testing.T) {
-	ctx := acctest.Context(t)
-	bucketName := sdkacctest.RandomWithPrefix(acctest.ResourcePrefix)
-	partition := acctest.Partition()
-	resourceName := "aws_s3_bucket.test"
-
-	resource.ParallelTest(t, resource.TestCase{
-		PreCheck:                 func() { acctest.PreCheck(ctx, t) },
-		ErrorCheck:               acctest.ErrorCheck(t, s3.EndpointsID),
-		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
-		CheckDestroy:             testAccCheckBucketDestroy(ctx),
-		Steps: []resource.TestStep{
-			{
-				Config: testAccBucketConfig_policy(bucketName, partition),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckBucketExists(ctx, resourceName),
-					testAccCheckBucketPolicy(ctx, resourceName, testAccBucketPolicy(bucketName, partition)),
-				),
-			},
-			{
-				ResourceName:      resourceName,
-				ImportState:       true,
-				ImportStateVerify: true,
-				ImportStateVerifyIgnore: []string{
-					"acl",
-					"force_destroy",
-					"grant",
-					// NOTE: Prior to Terraform AWS Provider 3.0, this attribute did not import correctly either.
-					//       The Read function does not require GetBucketPolicy, if the argument is not configured.
-					//       Rather than introduce that breaking change as well with 3.0, instead we leave the
-					//       current Read behavior and note this will be deprecated in a later 3.x release along
-					//       with other inline policy attributes across the provider.
-					"policy",
-				},
-			},
-			{
-				// As Policy is a Computed field, removing it from terraform will not
-				// trigger an update to remove it from the S3 bucket.
-				Config: testAccBucketConfig_basic(bucketName),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckBucketExists(ctx, resourceName),
-					testAccCheckBucketPolicy(ctx, resourceName, testAccBucketPolicy(bucketName, partition)),
-				),
-			},
-			{
-				// As Policy is a Computed field, setting it to the empty String will not
-				// trigger an update to remove it from the S3 bucket.
-				Config: testAccBucketConfig_emptyPolicy(bucketName),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckBucketExists(ctx, resourceName),
-					testAccCheckBucketPolicy(ctx, resourceName, testAccBucketPolicy(bucketName, partition)),
 				),
 			},
 		},
@@ -2560,7 +2354,7 @@ func TestBucketRegionalDomainName(t *testing.T) {
 		{
 			Region:           endpoints.UsEast1RegionID,
 			ExpectedErrCount: 0,
-			ExpectedOutput:   bucket + ".s3.amazonaws.com",
+			ExpectedOutput:   bucket + fmt.Sprintf(".s3.%s.%s", endpoints.UsEast1RegionID, acctest.PartitionDNSSuffix()),
 		},
 		{
 			Region:           endpoints.UsWest2RegionID,
@@ -2762,40 +2556,26 @@ func testAccCheckBucketDestroy(ctx context.Context) resource.TestCheckFunc {
 
 func testAccCheckBucketDestroyWithProvider(ctx context.Context) acctest.TestCheckWithProviderFunc {
 	return func(s *terraform.State, provider *schema.Provider) error {
-		conn := provider.Meta().(*conns.AWSClient).S3Conn()
+		conn := provider.Meta().(*conns.AWSClient).S3Client(ctx)
 
 		for _, rs := range s.RootModule().Resources {
 			if rs.Type != "aws_s3_bucket" {
 				continue
 			}
 
-			input := &s3.HeadBucketInput{
-				Bucket: aws.String(rs.Primary.ID),
-			}
+			err := tfs3.FindBucket(ctx, conn, rs.Primary.ID)
 
-			// Retry for S3 eventual consistency
-			err := resource.RetryContext(ctx, 1*time.Minute, func() *resource.RetryError {
-				_, err := conn.HeadBucketWithContext(ctx, input)
-
-				if tfawserr.ErrCodeEquals(err, s3.ErrCodeNoSuchBucket) || tfawserr.ErrCodeEquals(err, "NotFound") {
-					return nil
-				}
-
-				if err != nil {
-					return resource.NonRetryableError(err)
-				}
-
-				return resource.RetryableError(fmt.Errorf("AWS S3 Bucket still exists: %s", rs.Primary.ID))
-			})
-
-			if tfresource.TimedOut(err) {
-				_, err = conn.HeadBucketWithContext(ctx, input)
+			if tfresource.NotFound(err) {
+				continue
 			}
 
 			if err != nil {
 				return err
 			}
+
+			return fmt.Errorf("S3 Bucket %s still exists", rs.Primary.ID)
 		}
+
 		return nil
 	}
 }
@@ -2812,35 +2592,24 @@ func testAccCheckBucketExistsWithProvider(ctx context.Context, n string, provide
 		}
 
 		if rs.Primary.ID == "" {
-			return fmt.Errorf("No ID is set")
+			return fmt.Errorf("No S3 Bucket ID is set")
 		}
 
-		provider := providerF()
+		conn := providerF().Meta().(*conns.AWSClient).S3Client(ctx)
 
-		conn := provider.Meta().(*conns.AWSClient).S3Conn()
-		_, err := conn.HeadBucketWithContext(ctx, &s3.HeadBucketInput{
-			Bucket: aws.String(rs.Primary.ID),
-		})
-
-		if err != nil {
-			if tfawserr.ErrCodeEquals(err, s3.ErrCodeNoSuchBucket) {
-				return fmt.Errorf("S3 bucket not found")
-			}
-			return err
-		}
-		return nil
+		return tfs3.FindBucket(ctx, conn, rs.Primary.ID)
 	}
 }
 
 func testAccCheckBucketAddObjects(ctx context.Context, n string, keys ...string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs := s.RootModule().Resources[n]
-		conn := acctest.Provider.Meta().(*conns.AWSClient).S3ConnURICleaningDisabled()
+		conn := acctest.Provider.Meta().(*conns.AWSClient).S3Client(ctx)
 
 		for _, key := range keys {
-			_, err := conn.PutObjectWithContext(ctx, &s3.PutObjectInput{
-				Bucket: aws.String(rs.Primary.ID),
-				Key:    aws.String(key),
+			_, err := conn.PutObject(ctx, &s3_sdkv2.PutObjectInput{
+				Bucket: aws_sdkv2.String(rs.Primary.ID),
+				Key:    aws_sdkv2.String(key),
 			})
 
 			if err != nil {
@@ -2855,7 +2624,7 @@ func testAccCheckBucketAddObjects(ctx context.Context, n string, keys ...string)
 func testAccCheckBucketAddObjectsWithLegalHold(ctx context.Context, n string, keys ...string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs := s.RootModule().Resources[n]
-		conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn()
+		conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn(ctx)
 
 		for _, key := range keys {
 			_, err := conn.PutObjectWithContext(ctx, &s3.PutObjectInput{
@@ -2873,10 +2642,29 @@ func testAccCheckBucketAddObjectsWithLegalHold(ctx context.Context, n string, ke
 	}
 }
 
+func testAccCheckBucketAddObjectWithMetadata(ctx context.Context, n string, key string, metadata map[string]string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs := s.RootModule().Resources[n]
+		conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn(ctx)
+
+		_, err := conn.PutObjectWithContext(ctx, &s3.PutObjectInput{
+			Bucket:   aws.String(rs.Primary.ID),
+			Key:      aws.String(key),
+			Metadata: aws.StringMap(metadata),
+		})
+
+		if err != nil {
+			return fmt.Errorf("PutObject error: %s", err)
+		}
+
+		return nil
+	}
+}
+
 // Create an S3 bucket via a CF stack so that it has system tags.
 func testAccCheckBucketCreateViaCloudFormation(ctx context.Context, n string, stackID *string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
-		conn := acctest.Provider.Meta().(*conns.AWSClient).CloudFormationConn()
+		conn := acctest.Provider.Meta().(*conns.AWSClient).CloudFormationConn(ctx)
 		stackName := sdkacctest.RandomWithPrefix("tf-acc-test-s3tags")
 		templateBody := fmt.Sprintf(`{
   "Resources": {
@@ -2889,7 +2677,7 @@ func testAccCheckBucketCreateViaCloudFormation(ctx context.Context, n string, st
   }
 }`, n)
 
-		requestToken := resource.UniqueId()
+		requestToken := id.UniqueId()
 		req := &cloudformation.CreateStackInput{
 			StackName:          aws.String(stackName),
 			TemplateBody:       aws.String(templateBody),
@@ -2919,7 +2707,7 @@ func testAccCheckBucketCreateViaCloudFormation(ctx context.Context, n string, st
 func testAccCheckBucketTagKeys(ctx context.Context, n string, keys ...string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs := s.RootModule().Resources[n]
-		conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn()
+		conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn(ctx)
 
 		got, err := tfs3.BucketListTags(ctx, conn, rs.Primary.Attributes["bucket"])
 		if err != nil {
@@ -2951,53 +2739,6 @@ func testAccCheckBucketDomainName(resourceName string, attributeName string, buc
 	}
 }
 
-func testAccCheckBucketPolicy(ctx context.Context, n string, policy string) resource.TestCheckFunc {
-	return func(s *terraform.State) error {
-		rs := s.RootModule().Resources[n]
-		conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn()
-
-		out, err := conn.GetBucketPolicyWithContext(ctx, &s3.GetBucketPolicyInput{
-			Bucket: aws.String(rs.Primary.ID),
-		})
-
-		if tfawserr.ErrCodeEquals(err, tfs3.ErrCodeNoSuchBucketPolicy) {
-			return nil
-		}
-
-		if policy == "" {
-			if err == nil {
-				return fmt.Errorf("Expected no policy, got: %#v", *out.Policy)
-			} else {
-				return fmt.Errorf("GetBucketPolicy error: %v, expected %s", err, policy)
-			}
-		}
-		if err != nil {
-			return fmt.Errorf("GetBucketPolicy error: %v, expected %s", err, policy)
-		}
-
-		if v := out.Policy; v == nil {
-			if policy != "" {
-				return fmt.Errorf("bad policy, found nil, expected: %s", policy)
-			}
-		} else {
-			expected := make(map[string]interface{})
-			if err := json.Unmarshal([]byte(policy), &expected); err != nil {
-				return err
-			}
-			actual := make(map[string]interface{})
-			if err := json.Unmarshal([]byte(*v), &actual); err != nil {
-				return err
-			}
-
-			if !reflect.DeepEqual(expected, actual) {
-				return fmt.Errorf("bad policy, expected: %#v, got %#v", expected, actual)
-			}
-		}
-
-		return nil
-	}
-}
-
 func testAccBucketRegionalDomainName(bucket, region string) string {
 	regionalEndpoint, err := tfs3.BucketRegionalDomainName(bucket, region)
 	if err != nil {
@@ -3018,7 +2759,7 @@ func testAccCheckBucketWebsiteEndpoint(resourceName string, attributeName string
 func testAccCheckBucketUpdateTags(ctx context.Context, n string, oldTags, newTags map[string]string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs := s.RootModule().Resources[n]
-		conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn()
+		conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn(ctx)
 
 		return tfs3.BucketUpdateTags(ctx, conn, rs.Primary.Attributes["bucket"], oldTags, newTags)
 	}
@@ -3027,7 +2768,7 @@ func testAccCheckBucketUpdateTags(ctx context.Context, n string, oldTags, newTag
 func testAccCheckBucketCheckTags(ctx context.Context, n string, expectedTags map[string]string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs := s.RootModule().Resources[n]
-		conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn()
+		conn := acctest.Provider.Meta().(*conns.AWSClient).S3Conn(ctx)
 
 		got, err := tfs3.BucketListTags(ctx, conn, rs.Primary.Attributes["bucket"])
 		if err != nil {
@@ -3041,23 +2782,6 @@ func testAccCheckBucketCheckTags(ctx context.Context, n string, expectedTags map
 
 		return nil
 	}
-}
-
-func testAccBucketPolicy(bucketName, partition string) string {
-	return fmt.Sprintf(`{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "",
-      "Effect": "Allow",
-      "Principal": {
-        "AWS": "*"
-      },
-      "Action": "s3:GetObject",
-      "Resource": "arn:%[1]s:s3:::%[2]s/*"
-    }
-  ]
-}`, partition, bucketName)
 }
 
 func testAccBucketConfig_basic(bucketName string) string {
@@ -3192,49 +2916,10 @@ resource "aws_s3_bucket" "test" {
 `, bucketName)
 }
 
-func testAccBucketConfig_aclGrants(bucketName string) string {
-	return fmt.Sprintf(`
-data "aws_canonical_user_id" "current" {}
-
-resource "aws_s3_bucket" "test" {
-  bucket = %[1]q
-
-  grant {
-    id          = data.aws_canonical_user_id.current.id
-    type        = "CanonicalUser"
-    permissions = ["FULL_CONTROL", "WRITE"]
-  }
-}
-`, bucketName)
-}
-
-func testAccBucketConfig_updatedGrants(bucketName string) string {
-	return fmt.Sprintf(`
-data "aws_canonical_user_id" "current" {}
-
-resource "aws_s3_bucket" "test" {
-  bucket = %[1]q
-
-  grant {
-    id          = data.aws_canonical_user_id.current.id
-    type        = "CanonicalUser"
-    permissions = ["READ"]
-  }
-
-  grant {
-    type        = "Group"
-    permissions = ["READ_ACP"]
-    uri         = "http://acs.amazonaws.com/groups/s3/LogDelivery"
-  }
-}
-`, bucketName)
-}
-
 func testAccBucketConfig_lifecycle(bucketName string) string {
 	return fmt.Sprintf(`
 resource "aws_s3_bucket" "test" {
   bucket = %[1]q
-  acl    = "private"
 
   lifecycle_rule {
     id      = "id1"
@@ -3343,7 +3028,6 @@ func testAccBucketConfig_lifecycleExpireMarker(bucketName string) string {
 	return fmt.Sprintf(`
 resource "aws_s3_bucket" "test" {
   bucket = %[1]q
-  acl    = "private"
 
   lifecycle_rule {
     id      = "id1"
@@ -3391,12 +3075,24 @@ func testAccBucketConfig_logging(bucketName string) string {
 	return fmt.Sprintf(`
 resource "aws_s3_bucket" "log_bucket" {
   bucket = "%[1]s-log"
+}
+
+resource "aws_s3_bucket_ownership_controls" "log_bucket_ownership" {
+  bucket = aws_s3_bucket.log_bucket.id
+  rule {
+    object_ownership = "BucketOwnerPreferred"
+  }
+}
+
+resource "aws_s3_bucket_acl" "log_bucket_acl" {
+  depends_on = [aws_s3_bucket_ownership_controls.log_bucket_ownership]
+
+  bucket = aws_s3_bucket.log_bucket.id
   acl    = "log-delivery-write"
 }
 
 resource "aws_s3_bucket" "test" {
   bucket = %[1]q
-  acl    = "private"
 
   logging {
     target_bucket = aws_s3_bucket.log_bucket.id
@@ -3406,24 +3102,36 @@ resource "aws_s3_bucket" "test" {
 `, bucketName)
 }
 
-func testAccBucketConfig_emptyPolicy(bucketName string) string {
+func testAccBucketConfig_policy(bucketName string) string {
 	return fmt.Sprintf(`
-resource "aws_s3_bucket" "test" {
-  bucket = %[1]q
-  acl    = "private"
-  policy = ""
-}
-`, bucketName)
+data "aws_partition" "current" {}
+data "aws_caller_identity" "current" {}
+
+data "aws_iam_policy_document" "policy" {
+  statement {
+    effect = "Allow"
+
+    actions = [
+      "s3:*",
+    ]
+
+    resources = [
+      "arn:${data.aws_partition.current.partition}:s3:::%[1]s",
+      "arn:${data.aws_partition.current.partition}:s3:::%[1]s/*",
+    ]
+
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+  }
 }
 
-func testAccBucketConfig_policy(bucketName, partition string) string {
-	return fmt.Sprintf(`
 resource "aws_s3_bucket" "test" {
   bucket = %[1]q
-  acl    = "private"
-  policy = %[2]s
+  policy = data.aws_iam_policy_document.policy.json
 }
-`, bucketName, strconv.Quote(testAccBucketPolicy(bucketName, partition)))
+`, bucketName)
 }
 
 func testAccBucketConfig_ReplicationBase(bucketName string) string {
@@ -3469,7 +3177,6 @@ func testAccBucketConfig_replication(bucketName, storageClass string) string {
 		fmt.Sprintf(`
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -3501,7 +3208,6 @@ data "aws_caller_identity" "current" {}
 
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -3554,7 +3260,6 @@ resource "aws_s3_bucket" "destination3" {
 
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -3630,7 +3335,6 @@ resource "aws_s3_bucket" "destination3" {
 
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -3709,7 +3413,6 @@ resource "aws_s3_bucket" "destination2" {
 
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -3760,7 +3463,6 @@ func testAccBucketConfig_replicationNoVersioning(bucketName string) string {
 		fmt.Sprintf(`
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s"
-  acl    = "private"
 
   replication_configuration {
     role = aws_iam_role.role.arn
@@ -3787,7 +3489,6 @@ func testAccBucketConfig_replicationRulesDestination(bucketName string) string {
 data "aws_caller_identity" "current" {}
 
 resource "aws_s3_bucket" "source" {
-  acl    = "private"
   bucket = "%[1]s-source"
 
   replication_configuration {
@@ -3825,7 +3526,6 @@ resource "aws_kms_key" "replica" {
 
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -3870,7 +3570,6 @@ resource "aws_kms_key" "replica" {
 
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -3912,7 +3611,6 @@ func testAccBucketConfig_replicationNoPrefix(bucketName string) string {
 		fmt.Sprintf(`
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -3941,7 +3639,6 @@ func testAccBucketConfig_replicationNoStorageClass(bucketName string) string {
 		fmt.Sprintf(`
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -3988,7 +3685,6 @@ POLICY
 
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -4031,7 +3727,6 @@ func testAccBucketConfig_replicationV2DeleteMarkerReplicationDisabled(bucketName
 		fmt.Sprintf(`
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -4064,7 +3759,6 @@ func testAccBucketConfig_replicationV2NoTags(bucketName string) string {
 		fmt.Sprintf(`
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -4099,7 +3793,6 @@ func testAccBucketConfig_replicationV2OnlyOneTag(bucketName string) string {
 		fmt.Sprintf(`
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -4136,7 +3829,6 @@ func testAccBucketConfig_replicationV2PrefixAndTags(bucketName string) string {
 		fmt.Sprintf(`
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -4176,7 +3868,6 @@ func testAccBucketConfig_replicationV2MultipleTags(bucketName string) string {
 		fmt.Sprintf(`
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -4213,7 +3904,6 @@ func testAccBucketConfig_replicationV2RTC(bucketName string, minutes int) string
 		fmt.Sprintf(`
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -4251,7 +3941,6 @@ func testAccBucketConfig_replicationV2RTCNoMinutes(bucketName string) string {
 		fmt.Sprintf(`
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -4285,7 +3974,6 @@ func testAccBucketConfig_replicationV2RTCNoStatus(bucketName string) string {
 		fmt.Sprintf(`
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
 
   versioning {
     enabled = true
@@ -4319,7 +4007,6 @@ func testAccBucketConfig_replicationV2RTCNotConfigured(bucketName string) string
 		fmt.Sprintf(`
 resource "aws_s3_bucket" "source" {
   bucket = "%[1]s-source"
-  acl    = "private"
   versioning {
     enabled = true
   }
@@ -4393,7 +4080,6 @@ func testAccBucketConfig_website(bucketName string) string {
 	return fmt.Sprintf(`
 resource "aws_s3_bucket" "test" {
   bucket = %[1]q
-  acl    = "public-read"
 
   website {
     index_document = "index.html"
@@ -4406,7 +4092,6 @@ func testAccBucketConfig_websiteAndError(bucketName string) string {
 	return fmt.Sprintf(`
 resource "aws_s3_bucket" "test" {
   bucket = %[1]q
-  acl    = "public-read"
 
   website {
     index_document = "index.html"
@@ -4420,7 +4105,6 @@ func testAccBucketConfig_websiteAndRedirect(bucketName string) string {
 	return fmt.Sprintf(`
 resource "aws_s3_bucket" "test" {
   bucket = %[1]q
-  acl    = "public-read"
 
   website {
     redirect_all_requests_to = "hashicorp.com?my=query"
@@ -4433,7 +4117,6 @@ func testAccBucketConfig_websiteAndHTTPSRedirect(bucketName string) string {
 	return fmt.Sprintf(`
 resource "aws_s3_bucket" "test" {
   bucket = %[1]q
-  acl    = "public-read"
 
   website {
     redirect_all_requests_to = "https://hashicorp.com?my=query"
@@ -4446,7 +4129,6 @@ func testAccBucketConfig_websiteAndRoutingRules(bucketName string) string {
 	return fmt.Sprintf(`
 resource "aws_s3_bucket" "test" {
   bucket = %[1]q
-  acl    = "public-read"
 
   website {
     index_document = "index.html"
@@ -4476,11 +4158,6 @@ resource "aws_s3_bucket" "test" {
   bucket        = %[1]q
   force_destroy = false
 }
-
-resource "aws_s3_bucket_acl" "test" {
-  bucket = aws_s3_bucket.test.id
-  acl    = "private"
-}
 `, bucketName)
 }
 
@@ -4495,11 +4172,6 @@ resource "aws_s3_bucket" "test" {
     Key2 = "BBB"
     Key3 = "CCC"
   }
-}
-
-resource "aws_s3_bucket_acl" "test" {
-  bucket = aws_s3_bucket.test.id
-  acl    = "private"
 }
 `, bucketName)
 }
@@ -4517,11 +4189,6 @@ resource "aws_s3_bucket" "test" {
     Key5 = "EEE"
   }
 }
-
-resource "aws_s3_bucket_acl" "test" {
-  bucket = aws_s3_bucket.test.id
-  acl    = "private"
-}
 `, bucketName)
 }
 
@@ -4537,11 +4204,6 @@ resource "aws_s3_bucket" "bucket1" {
   }
 }
 
-resource "aws_s3_bucket_acl" "test1" {
-  bucket = aws_s3_bucket.bucket1.id
-  acl    = "private"
-}
-
 resource "aws_s3_bucket" "bucket2" {
   bucket        = "tf-test-bucket-2-%[1]d"
   force_destroy = true
@@ -4550,11 +4212,6 @@ resource "aws_s3_bucket" "bucket2" {
     Name        = "tf-test-bucket-2-%[1]d"
     Environment = "%[1]d"
   }
-}
-
-resource "aws_s3_bucket_acl" "test2" {
-  bucket = aws_s3_bucket.bucket2.id
-  acl    = "private"
 }
 
 resource "aws_s3_bucket" "bucket3" {
@@ -4567,11 +4224,6 @@ resource "aws_s3_bucket" "bucket3" {
   }
 }
 
-resource "aws_s3_bucket_acl" "test3" {
-  bucket = aws_s3_bucket.bucket3.id
-  acl    = "private"
-}
-
 resource "aws_s3_bucket" "bucket4" {
   bucket        = "tf-test-bucket-4-%[1]d"
   force_destroy = true
@@ -4580,11 +4232,6 @@ resource "aws_s3_bucket" "bucket4" {
     Name        = "tf-test-bucket-4-%[1]d"
     Environment = "%[1]d"
   }
-}
-
-resource "aws_s3_bucket_acl" "test4" {
-  bucket = aws_s3_bucket.bucket4.id
-  acl    = "private"
 }
 
 resource "aws_s3_bucket" "bucket5" {
@@ -4597,11 +4244,6 @@ resource "aws_s3_bucket" "bucket5" {
   }
 }
 
-resource "aws_s3_bucket_acl" "test5" {
-  bucket = aws_s3_bucket.bucket5.id
-  acl    = "private"
-}
-
 resource "aws_s3_bucket" "bucket6" {
   bucket        = "tf-test-bucket-6-%[1]d"
   force_destroy = true
@@ -4610,11 +4252,6 @@ resource "aws_s3_bucket" "bucket6" {
     Name        = "tf-test-bucket-6-%[1]d"
     Environment = "%[1]d"
   }
-}
-
-resource "aws_s3_bucket_acl" "test6" {
-  bucket = aws_s3_bucket.bucket6.id
-  acl    = "private"
 }
 `, randInt)
 }
@@ -4669,11 +4306,6 @@ resource "aws_s3_bucket" "test" {
   object_lock_enabled = true
 }
 
-resource "aws_s3_bucket_acl" "test" {
-  bucket = aws_s3_bucket.test.id
-  acl    = "private"
-}
-
 resource "aws_s3_bucket_versioning" "test" {
   bucket = aws_s3_bucket.test.id
   versioning_configuration {
@@ -4694,11 +4326,6 @@ resource "aws_s3_bucket" "test" {
   }
 }
 
-resource "aws_s3_bucket_acl" "test" {
-  bucket = aws_s3_bucket.test.id
-  acl    = "private"
-}
-
 resource "aws_s3_bucket_versioning" "test" {
   bucket = aws_s3_bucket.test.id
   versioning_configuration {
@@ -4714,11 +4341,6 @@ resource "aws_s3_bucket" "test" {
   bucket        = "%s"
   force_destroy = true
 }
-
-resource "aws_s3_bucket_acl" "test" {
-  bucket = aws_s3_bucket.test.id
-  acl    = "private"
-}
 `, bucketName)
 }
 
@@ -4729,11 +4351,6 @@ resource "aws_s3_bucket" "test" {
   force_destroy = true
 
   object_lock_enabled = true
-}
-
-resource "aws_s3_bucket_acl" "test" {
-  bucket = aws_s3_bucket.test.id
-  acl    = "private"
 }
 
 resource "aws_s3_bucket_versioning" "bucket" {
@@ -4751,16 +4368,16 @@ resource "aws_s3_bucket" "test" {
 }
 `
 
-const testAccBucketConfig_namePrefix = `
+func testAccBucketConfig_namePrefix(namePrefix string) string {
+	return fmt.Sprintf(`
 resource "aws_s3_bucket" "test" {
-  bucket_prefix = "tf-test-"
+  bucket_prefix = %[1]q
 }
-`
+`, namePrefix)
+}
 
-const testAccBucketConfig_generatedName = `
-resource "aws_s3_bucket" "test" {
-  bucket_prefix = "tf-test-"
-}
+const testAccBucketConfig_nameGenerated = `
+resource "aws_s3_bucket" "test" {}
 `
 
 func testAccBucketConfig_duplicate(region, bucketName string) string {

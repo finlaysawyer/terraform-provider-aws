@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/serverlessapplicationrepository"
 	tftags "github.com/hashicorp/terraform-provider-aws/internal/tags"
+	"github.com/hashicorp/terraform-provider-aws/internal/types"
 )
 
 // []*SERVICE.Tag handling
@@ -36,4 +37,23 @@ func KeyValueTags(ctx context.Context, tags []*serverlessapplicationrepository.T
 	}
 
 	return tftags.New(ctx, m)
+}
+
+// getTagsIn returns serverlessrepo service tags from Context.
+// nil is returned if there are no input tags.
+func getTagsIn(ctx context.Context) []*serverlessapplicationrepository.Tag {
+	if inContext, ok := tftags.FromContext(ctx); ok {
+		if tags := Tags(inContext.TagsIn.UnwrapOrDefault()); len(tags) > 0 {
+			return tags
+		}
+	}
+
+	return nil
+}
+
+// setTagsOut sets serverlessrepo service tags in Context.
+func setTagsOut(ctx context.Context, tags []*serverlessapplicationrepository.Tag) {
+	if inContext, ok := tftags.FromContext(ctx); ok {
+		inContext.TagsOut = types.Some(KeyValueTags(ctx, tags))
+	}
 }
